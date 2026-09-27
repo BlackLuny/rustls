@@ -2,10 +2,19 @@ use alloc::vec::Vec;
 use core::mem;
 use core::ops::Range;
 #[cfg(feature = "std")]
+use std::cell::RefCell;
+#[cfg(feature = "std")]
 use std::io;
 
 #[cfg(feature = "std")]
 use crate::msgs::message::MAX_WIRE_SIZE;
+
+#[cfg(feature = "std")]
+std::thread_local! {
+    // The record-oriented caller releases its empty buffer after parsing. Keep
+    // just one allocation per worker thread, rather than one per idle session.
+    static DATA_RECORD_BUFFER: RefCell<Vec<u8>> = RefCell::new(Vec::new());
+}
 
 /// Conversion from a slice within a larger buffer into
 /// a `Range` offset within.
@@ -156,9 +165,43 @@ pub(crate) struct DeframerVecBuffer {
 
     /// What size prefix of `buf` is used.
     used: usize,
+
+    /// Opt-in for callers that feed one complete TLS record at a time. Reusing
+    /// the data-record allocation avoids shrinking to 4 KiB and growing again
+    /// for every full-size record. The allocation is returned to a bounded
+    /// thread-local cache once the complete record has been processed.
+    /// The normal socket path keeps rustls's original memory policy.
+    reuse_data_record_buffer: bool,
 }
 
 impl DeframerVecBuffer {
+    pub(crate) fn set_reuse_data_record_buffer(&mut self, reuse: bool) {
+        self.reuse_data_record_buffer = reuse;
+    }
+
+    #[cfg(feature = "std")]
+    pub(crate) fn recycle_empty_data_record_buffer(&mut self) {
+        if !self.reuse_data_record_buffer || self.used != 0 || self.buf.len() <= 4096 {
+            return;
+        }
+
+        // Vec may round the allocation above the maximum wire record size.
+        // Keep that normal growth, but reject larger allocations.
+        if self.buf.capacity() > MAX_WIRE_SIZE * 2 {
+            self.buf = Vec::new();
+            return;
+        }
+
+        DATA_RECORD_BUFFER.with(|slot| {
+            let mut cached = slot.borrow_mut();
+            if self.buf.len() > cached.len() {
+                mem::swap(&mut self.buf, &mut cached);
+            } else {
+                self.buf = Vec::new();
+            }
+        });
+    }
+
     /// Discard `taken` bytes from the start of our buffer.
     pub(crate) fn discard(&mut self, taken: usize) {
         #[allow(clippy::comparison_chain)]
@@ -197,6 +240,14 @@ impl DeframerVecBuffer {
 impl DeframerVecBuffer {
     /// Read some bytes from `rd`, and add them to the buffer.
     pub(crate) fn read(&mut self, rd: &mut dyn io::Read, in_handshake: bool) -> io::Result<usize> {
+        if self.reuse_data_record_buffer && self.used == 0 {
+            DATA_RECORD_BUFFER.with(|slot| {
+                let mut cached = slot.borrow_mut();
+                if cached.len() > self.buf.len() {
+                    mem::swap(&mut self.buf, &mut cached);
+                }
+            });
+        }
         if let Err(err) = self.prepare_read(in_handshake) {
             return Err(io::Error::new(io::ErrorKind::InvalidData, err));
         }
@@ -243,7 +294,9 @@ impl DeframerVecBuffer {
         let need_capacity = Ord::min(allow_max, self.used + READ_SIZE);
         if need_capacity > self.buf.len() {
             self.buf.resize(need_capacity, 0);
-        } else if self.used == 0 || self.buf.len() > allow_max {
+        } else if (self.used == 0 && !self.reuse_data_record_buffer)
+            || self.buf.len() > allow_max
+        {
             self.buf.resize(need_capacity, 0);
             self.buf.shrink_to(need_capacity);
         }

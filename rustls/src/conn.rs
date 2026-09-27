@@ -415,6 +415,17 @@ pub struct ConnectionCommon<Data> {
 }
 
 impl<Data> ConnectionCommon<Data> {
+    /// Reuse the incoming data-record buffer between reads.
+    ///
+    /// This is intended for a caller that frames complete records before
+    /// `read_tls` and repeatedly feeds full-size application records. An empty
+    /// record buffer is cached per thread instead of retained per connection.
+    /// The default is disabled, preserving rustls's normal buffer policy.
+    pub fn set_incoming_record_buffer_reuse(&mut self, reuse: bool) {
+        self.deframer_buffer
+            .set_reuse_data_record_buffer(reuse);
+    }
+
     /// Processes any new packets read by a previous call to
     /// [`Connection::read_tls`].
     ///
@@ -435,8 +446,12 @@ impl<Data> ConnectionCommon<Data> {
     /// [`process_new_packets`]: Connection::process_new_packets
     #[inline]
     pub fn process_new_packets(&mut self) -> Result<IoState, Error> {
-        self.core
-            .process_new_packets(&mut self.deframer_buffer, &mut self.sendable_plaintext)
+        let result = self
+            .core
+            .process_new_packets(&mut self.deframer_buffer, &mut self.sendable_plaintext);
+        #[cfg(feature = "std")]
+        self.deframer_buffer.recycle_empty_data_record_buffer();
+        result
     }
 
     /// Derives key material from the agreed connection secrets.
