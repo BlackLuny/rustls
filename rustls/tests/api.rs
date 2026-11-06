@@ -5867,6 +5867,61 @@ fn exercise_all_key_exchange_methods() {
     }
 }
 
+#[test]
+fn custom_session_id_is_signed_once_and_survives_hello_retry() {
+    let provider = provider::default_provider();
+    let server_config = make_server_config_with_kx_groups(
+        KeyType::Rsa2048,
+        vec![provider::kx_group::X25519],
+        &provider,
+    );
+    for (groups, handshake_kind) in [
+        (vec![provider::kx_group::X25519], HandshakeKind::Full),
+        (
+            vec![provider::kx_group::SECP384R1, provider::kx_group::X25519],
+            HandshakeKind::FullWithHelloRetryRequest,
+        ),
+    ] {
+        let mut client_config =
+            make_client_config_with_kx_groups(KeyType::Rsa2048, groups, &provider);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let generator_calls = calls.clone();
+        client_config
+            .dangerous()
+            .set_legacy_session_id_generator(move |hello| {
+                assert_eq!(hello[0], u8::from(HandshakeType::ClientHello));
+                assert_eq!(hello[38], 32);
+                assert_eq!(&hello[39..71], &[0; 32]);
+                generator_calls.fetch_add(1, Ordering::Relaxed);
+                [0x5a; 32]
+            });
+
+        let (mut client, mut server) = make_pair_for_configs(client_config, server_config.clone());
+        let mut first_record = Vec::new();
+        client.write_tls(&mut first_record).unwrap();
+        assert_eq!(&first_record[5 + 39..5 + 71], &[0x5a; 32]);
+        server.read_tls(&mut first_record.as_slice()).unwrap();
+        server.process_new_packets().unwrap();
+        do_handshake(&mut client, &mut server);
+        assert_eq!(client.handshake_kind(), Some(handshake_kind));
+        assert_eq!(server.handshake_kind(), Some(handshake_kind));
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+}
+
+#[test]
+fn custom_session_id_rejects_early_data_configuration() {
+    let mut config = make_client_config(KeyType::Rsa2048, &provider::default_provider());
+    config
+        .dangerous()
+        .set_legacy_session_id_generator(|_| panic!("incompatible config called generator"));
+    config.enable_early_data = true;
+    assert!(matches!(
+        ClientConnection::new(Arc::new(config), "localhost".try_into().unwrap()),
+        Err(Error::General(message)) if message.contains("without ECH or early data")
+    ));
+}
+
 #[cfg(feature = "tls12")]
 #[test]
 fn test_client_sends_helloretryrequest() {

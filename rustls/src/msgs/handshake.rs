@@ -167,6 +167,10 @@ impl Codec<'_> for SessionId {
 }
 
 impl SessionId {
+    pub(crate) fn from_bytes(data: [u8; 32]) -> Self {
+        Self { data, len: 32 }
+    }
+
     pub(crate) fn random(secure_random: &dyn SecureRandom) -> Result<Self, rand::GetRandomFailed> {
         let mut data = [0u8; 32];
         secure_random.fill(&mut data)?;

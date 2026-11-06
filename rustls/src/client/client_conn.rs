@@ -288,6 +288,8 @@ pub struct ClientConfig {
     /// How to offer Encrypted Client Hello (ECH). The default is to not offer ECH.
     pub(super) ech_mode: Option<EchMode>,
 
+    pub(super) legacy_session_id_generator: Option<LegacySessionIdGenerator>,
+
     /// Request a specific number of TLS 1.3 session tickets via [RFC 9149].
     ///
     /// Set to `None` to disable sending the extension (the default).
@@ -557,9 +559,18 @@ pub enum Tls12Resumption {
     SessionIdOrTickets,
 }
 
+#[derive(Clone)]
+pub(super) struct LegacySessionIdGenerator(pub(super) Arc<dyn Fn(&[u8]) -> [u8; 32] + Send + Sync>);
+
+impl fmt::Debug for LegacySessionIdGenerator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("LegacySessionIdGenerator")
+    }
+}
+
 /// Container for unsafe APIs
 pub(super) mod danger {
-    use super::ClientConfig;
+    use super::{ClientConfig, LegacySessionIdGenerator, Resumption};
     use super::verify::ServerCertVerifier;
     use crate::sync::Arc;
 
@@ -574,6 +585,20 @@ pub(super) mod danger {
         /// Overrides the default `ServerCertVerifier` with something else.
         pub fn set_certificate_verifier(&mut self, verifier: Arc<dyn ServerCertVerifier>) {
             self.cfg.verifier = verifier;
+        }
+
+        /// Sets the 32-byte compatibility session ID of the initial ClientHello.
+        ///
+        /// The callback receives the encoded handshake message, including its header and
+        /// a zeroed session ID. The generated ID is kept for any HelloRetryRequest.
+        /// This option disables resumption and requires TLS 1.3 over TCP with ECH
+        /// and early data disabled.
+        pub fn set_legacy_session_id_generator(
+            &mut self,
+            generator: impl Fn(&[u8]) -> [u8; 32] + Send + Sync + 'static,
+        ) {
+            self.cfg.legacy_session_id_generator = Some(LegacySessionIdGenerator(Arc::new(generator)));
+            self.cfg.resumption = Resumption::disabled();
         }
     }
 }
