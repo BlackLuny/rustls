@@ -12,6 +12,7 @@ use std::{fmt, mem};
 #[cfg(feature = "aws_lc_rs")]
 use pki_types::PrivateKeyDer;
 use pki_types::{CertificateDer, IpAddr, ServerName, UnixTime};
+#[cfg(feature = "aws_lc_rs")]
 use rcgen::{
     CertificateParams, CertifiedIssuer, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose,
 };
@@ -5898,9 +5899,13 @@ fn custom_session_id_is_signed_once_and_survives_hello_retry() {
 
         let (mut client, mut server) = make_pair_for_configs(client_config, server_config.clone());
         let mut first_record = Vec::new();
-        client.write_tls(&mut first_record).unwrap();
+        client
+            .write_tls(&mut first_record)
+            .unwrap();
         assert_eq!(&first_record[5 + 39..5 + 71], &[0x5a; 32]);
-        server.read_tls(&mut first_record.as_slice()).unwrap();
+        server
+            .read_tls(&mut first_record.as_slice())
+            .unwrap();
         server.process_new_packets().unwrap();
         do_handshake(&mut client, &mut server);
         assert_eq!(client.handshake_kind(), Some(handshake_kind));

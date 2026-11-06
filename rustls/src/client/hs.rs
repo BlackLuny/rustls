@@ -85,7 +85,9 @@ impl ClientHelloInput {
         cx: &mut ClientContext<'_>,
         config: Arc<ClientConfig>,
     ) -> Result<Self, Error> {
-        let custom_session_id = config.legacy_session_id_generator.is_some();
+        let custom_session_id = config
+            .legacy_session_id_generator
+            .is_some();
         if custom_session_id
             && (cx.common.is_quic()
                 || config.ech_mode.is_some()

@@ -559,8 +559,10 @@ pub enum Tls12Resumption {
     SessionIdOrTickets,
 }
 
+type LegacySessionIdCallback = dyn Fn(&[u8]) -> [u8; 32] + Send + Sync;
+
 #[derive(Clone)]
-pub(super) struct LegacySessionIdGenerator(pub(super) Arc<dyn Fn(&[u8]) -> [u8; 32] + Send + Sync>);
+pub(super) struct LegacySessionIdGenerator(pub(super) Arc<LegacySessionIdCallback>);
 
 impl fmt::Debug for LegacySessionIdGenerator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -570,8 +572,8 @@ impl fmt::Debug for LegacySessionIdGenerator {
 
 /// Container for unsafe APIs
 pub(super) mod danger {
-    use super::{ClientConfig, LegacySessionIdGenerator, Resumption};
     use super::verify::ServerCertVerifier;
+    use super::{ClientConfig, LegacySessionIdGenerator, Resumption};
     use crate::sync::Arc;
 
     /// Accessor for dangerous configuration options.
@@ -597,7 +599,8 @@ pub(super) mod danger {
             &mut self,
             generator: impl Fn(&[u8]) -> [u8; 32] + Send + Sync + 'static,
         ) {
-            self.cfg.legacy_session_id_generator = Some(LegacySessionIdGenerator(Arc::new(generator)));
+            self.cfg.legacy_session_id_generator =
+                Some(LegacySessionIdGenerator(Arc::new(generator)));
             self.cfg.resumption = Resumption::disabled();
         }
     }

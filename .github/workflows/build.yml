@@ -545,4 +545,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - name: Keep the RustCrypto advisory confined to the provider example and tests
+      run: |
+        cargo tree --locked --workspace --all-features --target all --prefix none \
+          --exclude rustls-provider-example --exclude rustls-provider-test \
+          > "$RUNNER_TEMP/rustls-dependencies.txt"
+        if grep -q '^crypto-bigint v' "$RUNNER_TEMP/rustls-dependencies.txt"; then
+          echo '::error::crypto-bigint is reachable outside the provider example and tests'
+          exit 1
+        fi
     - uses: EmbarkStudios/cargo-deny-action@v2

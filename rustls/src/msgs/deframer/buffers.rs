@@ -1,8 +1,8 @@
 use alloc::vec::Vec;
+#[cfg(feature = "std")]
+use core::cell::RefCell;
 use core::mem;
 use core::ops::Range;
-#[cfg(feature = "std")]
-use std::cell::RefCell;
 #[cfg(feature = "std")]
 use std::io;
 
@@ -13,7 +13,7 @@ use crate::msgs::message::MAX_WIRE_SIZE;
 std::thread_local! {
     // The record-oriented caller releases its empty buffer after parsing. Keep
     // just one allocation per worker thread, rather than one per idle session.
-    static DATA_RECORD_BUFFER: RefCell<Vec<u8>> = RefCell::new(Vec::new());
+    static DATA_RECORD_BUFFER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Conversion from a slice within a larger buffer into
@@ -294,9 +294,7 @@ impl DeframerVecBuffer {
         let need_capacity = Ord::min(allow_max, self.used + READ_SIZE);
         if need_capacity > self.buf.len() {
             self.buf.resize(need_capacity, 0);
-        } else if (self.used == 0 && !self.reuse_data_record_buffer)
-            || self.buf.len() > allow_max
-        {
+        } else if (self.used == 0 && !self.reuse_data_record_buffer) || self.buf.len() > allow_max {
             self.buf.resize(need_capacity, 0);
             self.buf.shrink_to(need_capacity);
         }
