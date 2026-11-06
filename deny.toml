@@ -21,4 +21,5 @@ ignore = [
   "RUSTSEC-2026-0207", # Broken libcrux-sha3, no fixed version for our MSRV via zeroize (dropped on main)
   "RUSTSEC-2026-0208", # Ditto
   "RUSTSEC-2026-0212", # Ditto for libcrux-secrets
+  { id = "RUSTSEC-2026-0387", reason = "Unpublished RustCrypto provider example and its integration tests use elliptic-curve 0.13. The audit job checks that this dependency stays out of the rest of the workspace." },
 ]

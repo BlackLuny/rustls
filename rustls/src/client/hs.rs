@@ -27,6 +27,7 @@ use crate::error::{Error, PeerIncompatible, PeerMisbehaved};
 use crate::hash_hs::HandshakeHashBuffer;
 use crate::log::{debug, trace};
 use crate::msgs::base::Payload;
+use crate::msgs::codec::Codec;
 use crate::msgs::enums::{Compression, ExtensionType};
 use crate::msgs::handshake::{
     CertificateStatusRequest, ClientExtensions, ClientExtensionsInput, ClientHelloPayload,
@@ -84,7 +85,25 @@ impl ClientHelloInput {
         cx: &mut ClientContext<'_>,
         config: Arc<ClientConfig>,
     ) -> Result<Self, Error> {
+        let custom_session_id = config
+            .legacy_session_id_generator
+            .is_some();
+        if custom_session_id
+            && (cx.common.is_quic()
+                || config.ech_mode.is_some()
+                || config.enable_early_data
+                || !config.supports_version(ProtocolVersion::TLSv1_3, cx.common.protocol))
+        {
+            return Err(Error::General(
+                "custom session ID requires TLS 1.3 over TCP without ECH or early data".into(),
+            ));
+        }
         let mut resuming = ClientSessionValue::retrieve(&server_name, &config, cx);
+        if custom_session_id && resuming.is_some() {
+            return Err(Error::General(
+                "custom session ID cannot be used with session resumption".into(),
+            ));
+        }
         let session_id = match &mut resuming {
             Some(_resuming) => {
                 debug!("Resuming session");
@@ -112,6 +131,7 @@ impl ClientHelloInput {
         // https://tools.ietf.org/html/draft-ietf-quic-tls-34#section-8.4
         let session_id = match session_id {
             Some(session_id) => session_id,
+            None if custom_session_id => SessionId::from_bytes([0; 32]),
             None if cx.common.is_quic() => SessionId::empty(),
             None if !config.supports_version(ProtocolVersion::TLSv1_3, cx.common.protocol) => {
                 SessionId::empty()
@@ -447,6 +467,18 @@ fn emit_client_hello_for_retry(
     input.hello.offered_cipher_suites = chp_payload.cipher_suites.clone();
 
     let mut chp = HandshakeMessagePayload(HandshakePayload::ClientHello(chp_payload));
+    if let Some(generator) = config
+        .legacy_session_id_generator
+        .as_ref()
+        .filter(|_| retryreq.is_none())
+    {
+        let session_id = SessionId::from_bytes((generator.0)(&chp.get_encoding()));
+        let HandshakePayload::ClientHello(hello) = &mut chp.0 else {
+            unreachable!();
+        };
+        hello.session_id = session_id;
+        input.session_id = session_id;
+    }
 
     let tls13_early_data_key_schedule = match (ech_state.as_mut(), tls13_session) {
         // If we're performing ECH and resuming, then the PSK binder will have been dealt with

@@ -450,7 +450,8 @@ impl<Data> ConnectionCommon<Data> {
             .core
             .process_new_packets(&mut self.deframer_buffer, &mut self.sendable_plaintext);
         #[cfg(feature = "std")]
-        self.deframer_buffer.recycle_empty_data_record_buffer();
+        self.deframer_buffer
+            .recycle_empty_data_record_buffer();
         result
     }
 
